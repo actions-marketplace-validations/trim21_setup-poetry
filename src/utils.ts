@@ -1,8 +1,9 @@
-import * as path from "path";
-import { promises as fs } from "fs";
+import * as path from "node:path";
+import { promises as fs } from "node:fs";
 
 import { exec } from "@actions/exec";
-import { HttpClient, HttpClientResponse } from "@actions/http-client";
+import type { HttpClientResponse } from "@actions/http-client";
+import { HttpClient } from "@actions/http-client";
 import * as pep440 from "@renovatebot/pep440";
 
 interface PypiJson {
@@ -12,23 +13,36 @@ interface PypiJson {
      */
     version: string;
   };
-  releases: Record<string, unknown>;
+  releases: Record<
+    string,
+    [
+      {
+        requires_python: string;
+        yanked: boolean;
+      },
+    ]
+  >;
 }
 
-export function getLatestMatchedVersion(versions: string[], specifier: string,): string | null {
+export function getLatestMatchedVersion(
+  versions: string[],
+  specifier: string,
+): string | null {
   return pep440.maxSatisfying(versions, specifier);
 }
 
 export async function getPoetryPypiJSON(): Promise<PypiJson> {
   const http = new HttpClient("actions install poetry");
   const res: HttpClientResponse = await http.get(
-    "https://pypi.org/pypi/poetry/json"
+    "https://pypi.org/pypi/poetry/json",
   );
   const body: string = await res.readBody();
   return JSON.parse(body) as PypiJson;
 }
 
-export async function getPythonVersion(): Promise<string> {
+export async function getPythonVersion(): Promise<
+  [string, [number, number, number]]
+> {
   let myOutput = "";
   const options = {
     silent: true,
@@ -40,7 +54,31 @@ export async function getPythonVersion(): Promise<string> {
   };
 
   await exec("python", ["-VV"], options);
-  return myOutput;
+
+  let semverOutput = "";
+  const semverOptions = {
+    silent: true,
+    listeners: {
+      stdout: (data: Buffer) => {
+        semverOutput += data.toString();
+      },
+    },
+  };
+
+  await exec(
+    "python",
+    ["-c", "import sys,json;print(json.dumps(sys.version_info))"],
+    semverOptions,
+  );
+
+  return [
+    myOutput,
+    (JSON.parse(semverOutput) as Array<number>).slice(0, 3) as [
+      number,
+      number,
+      number,
+    ],
+  ];
 }
 
 export async function createVenv(): Promise<string> {
